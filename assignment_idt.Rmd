@@ -1,0 +1,148 @@
+---
+output: html_document
+---
+Predicting how well people exercise
+========================================================
+
+### Goal
+
+The dataset contains data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+The goal is to predict the manner in which they did the exercise ("classe" variable). 
+
+### Loading the data and required packages
+
+```{r,results='hide', cache=FALSE}
+data=read.csv("pml-training.csv")
+test=read.csv("pml-testing.csv")
+library(caret)
+```
+
+### Preprocessing and feature selection
+
+It is a very big dataset so I figured out what the most meaningful feature could be with a step-by-step method.
+
+```{r, cache=FALSE}
+dim(data)
+```
+
+
+#### Removing NAs
+
+I first noticed that lots of columns were full of NA. I removed those variables.
+
+```{r, cache=FALSE}
+isNA=c()
+for (i in 1:length(names(data))){ isNA[i] <- sum(is.na(data[,i]))}
+
+data=data[, -which(isNA != 0)]
+t=as.data.frame(table(isNA))
+colnames(t) <- c("numNA", "variables")
+t
+```
+
+I removed those variables, ending up with the ```t[1,2]``` variables without NAs.
+
+#### Removing "near zero values"
+
+In order to eliminate useless covariates I decided not to use all the variables whose percent of unique values was near zero. As a matter of fact, this kind of variables are uniform on the dataset and therefore are not needed to be used as predictors. 
+
+```{r, cache=FALSE}
+nsv <-nearZeroVar(data, saveMetrics=TRUE)
+data <- data[, which(nsv$nzv =="FALSE")]
+data <- data[, -1]
+```
+
+
+In this way I got free of ```dim(nsv[nsv$nzv == "TRUE",])[1]``` variables.
+
+#### Merging correlated variables
+
+Correlated variables give the same kind of information so they uselessly inflate variance. I checked how many variables where correlated more than 0.8 with the r cor() function.
+
+```{r, cache=FALSE}
+vector=c()
+ for (i in 1:58){vector[i] <- class(data[,i])}
+M <- abs(cor(data[, -which(vector=="factor")]))
+diag(M) <-0
+mm <-which(M>0.8, arr.ind=T)
+```
+
+I found out that ```length(unique(rownames(mm)))``` were strongly correlated and so I decided to do a PCA (Principal Component Analysis) on them.
+
+```{r, cache=FALSE}
+smallData <- data[, unique(rownames(mm))]
+prComp <- prcomp(smallData)
+summary(prComp)
+```
+
+As shown in the summary the first component explained 70% of the variance, while the first three principal compoents explained more than 90% of the variance. Therefore, I decided to eliminate from the dataset all the correlated variables and adding these three principal components instead.
+
+```{r, cache=FALSE}
+data=data[, !(names(data) %in% unique(rownames(mm)))]
+data$prcomp1 <- prComp$x[,1]
+data$prcomp2 <- prComp$x[,2]
+data$prcomp3 <- prComp$x[,3]
+
+smallTest = test[,unique(rownames(mm))]
+predictPCA <- predict(prComp, smallTest)
+test=test[, names(data)[1:(length(names(data))-4)]]
+test$prcomp1 <- predictPCA[,1]
+test$prcomp2 <- predictPCA[,2]
+test$prcomp3 <- predictPCA[,3]
+```
+
+I ended up with ```dim(data)[2]-1``` predictors for the 5 classes (A-E).
+
+### Building train and validation dataset
+
+I created a Validation dataset with 25% of the known data for cross-validation and assessment the out-of-sample error,
+
+```{r, cache=FALSE}
+inTrain <- createDataPartition(data$classe, p=0.75, list=FALSE)
+train <- data[inTrain,]
+val <- data[-inTrain,]
+dim(train)
+dim(val)
+```
+
+### Builing the model
+
+I used the caret package and the random forest algorithm. As computation time was long I saved the R file for being able to load it for making this file. You can see the code I used for getting the file as a comment after hashes. 
+
+```{r}
+#load(file="modelFit.R")
+#library(doMC)
+#registerDoMC(3)
+#modelFit <- train(classe ~ ., data=train, prox=T)
+#save(modelFit, file="modelFit.R")
+#finalModel=as.matrix(modelFit$results)
+load(file="finalModel.R")
+finalModel
+```
+
+As you can see the model as a high accuracy of 0.999, missing only 5 measurements.
+
+### Assessing out-of-sample error
+
+For assessing how the model works with data not used for training I used the validation dataset to predict the values. I then compared these values with the real ones creating a confusion matrix. In this way I confirmed that the accuracy remained higher than 0.99.
+
+```{r, cache=FALSE}
+#predictions=predict(modelFit, newdata=val)
+#cm<-confusionMatrix(predictions, val$classe)
+#cm.table=cm$table
+#cm.overal=cm$overall
+load(file="cm.table.R")
+load(file="cm.overal.R")
+cm.table
+cm.overal
+```
+
+### Applying the model on the test dataset
+
+I used the model to predict the 20 measurements of the test dataset and I verified thorough the coursera site that predictions were all correct!
+
+```{r, cache=FALSE}
+#answers=predict(modelFit, newdata=test)
+load(file="answer.R")
+answer
+```
